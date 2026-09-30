@@ -1,0 +1,36 @@
+# Folders
+__pycache__/
+.*/
+!.github/
+*.egg-info/
+venv/
+*.bak/
+docs/
+logs/
+backup/
+artwork/
+screenshot/
+release/
+github/
+
+# Files
+*.pyc
+*.pyo
+*.pyd
+*.bak
+*.ai
+*.psd
+*.bat
+*.zip
+*.log
+*.jfif
+release.ini
+release.sh
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
