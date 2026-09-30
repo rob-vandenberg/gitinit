@@ -21,12 +21,13 @@ from datetime import date
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = 'gitinit-py 0.0.3'
+__version__ = 'gitinit-py 0.0.4'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.4: The new-file check no longer asks about the files this run just created (they are approved).
 # v0.0.3: A missing release.py is downloaded from the latest release of rob-vandenberg/gitinit (never overwritten);
 #         an existing one must be at least release 0.0.6.
 # v0.0.2: release.ini gets an empty [publish] section (files for the GitHub source archives), with examples.
@@ -649,6 +650,7 @@ def main():
 
     # --- Folders and files ----------------------------------------------
     step(3, total, "Creating folders and files...")
+    before = {p.name for p in root.iterdir()}      # what was in the folder before this run
     for folder in folders:
         path = root / folder
         if path.exists():
@@ -656,6 +658,7 @@ def main():
         else:
             path.mkdir(parents=True)
             info(f"  created folder  {folder}")
+    created = []          # files written by this run: the new-file check does not ask about them
     for path, (content, newline) in generated.items():
         rel = path.relative_to(root).as_posix()
         if path.exists():
@@ -664,6 +667,8 @@ def main():
         write_text(path, content, newline)
         if path.name == "release.sh" and os.name != "nt":
             os.chmod(path, 0o755)
+        top = rel.split("/")[0]
+        created.append(rel if top in before else top)    # a folder made by this run is approved as a whole
         info(f"  created file    {rel}")
 
     license_missing = False
@@ -676,6 +681,7 @@ def main():
             info(f"  !! could not fetch the {LICENSE_KEY} license from GitHub: LICENSE not created")
         else:
             write_text(license_path, text)
+            created.append("LICENSE")
             info(f"  created file    LICENSE (fetched from GitHub: {LICENSE_KEY})")
 
     # --- Backup ---------------------------------------------------------
@@ -720,6 +726,7 @@ def main():
             run(["git", "init", "-b", "main"])
             run(["git", "remote", "add", "origin", remote_url])
             info("  New files are checked first (nothing is added without your answer):")
+            cfg.include = list(cfg.include) + created      # what gitinit just wrote is approved
             via_release(release, "review_new_files", cfg)
             run(["git", "add", "-A"])
             run(["git", "commit", "-m", INITIAL_MESSAGE])
