@@ -21,12 +21,13 @@ from datetime import date
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = 'gitinit-py 0.0.4'
+__version__ = 'gitinit-py 0.0.5'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.5: The initial tag is no longer pushed: it stays local, and GitHub creates the tag when the release is published.
 # v0.0.4: The new-file check no longer asks about the files this run just created (they are approved).
 # v0.0.3: A missing release.py is downloaded from the latest release of rob-vandenberg/gitinit (never overwritten);
 #         an existing one must be at least release 0.0.6.
@@ -618,7 +619,7 @@ def main():
     elif repo_exists and not repo_empty:
         git_plan = f"link to the existing remote history (init, fetch, mixed reset to origin/{default_branch}); no commit, no push"
     else:
-        git_plan = f"init, commit, tag {tag} and push"
+        git_plan = f"init, commit, push, and tag {tag} locally (not pushed)"
     repo_plan = ("will be created, public" if not repo_exists
                  else "exists, empty: description and topics will be set" if repo_empty
                  else "exists with commits: left untouched")
@@ -736,8 +737,7 @@ def main():
             raise
         run(["git", "tag", "-a", tag, "-m", INITIAL_MESSAGE])
         run(["git", "push", "-u", "origin", "main"])
-        run(["git", "push", "origin", tag])
-        info(f"  committed, tagged {tag} and pushed")
+        info(f"  committed and pushed; tagged {tag} locally only (GitHub creates the tag when you publish the release)")
 
     # --- Done -----------------------------------------------------------
     step(7, total, "Done.")
