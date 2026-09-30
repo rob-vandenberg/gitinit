@@ -26,16 +26,19 @@ import subprocess
 import sys
 import tempfile
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from types import SimpleNamespace
 
 # --- Version ------------------------------------------------------------
-__version__ = 'release 0.0.8'
+__version__ = 'release 0.0.9'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.9: --update=list and --update=<version> say that they are searching and show a progress counter; the
+#         releases are checked four at a time. Shorter messages at the end of a run.
 # v0.0.8: The version line at the start of a run is printed in bright white.
 # v0.0.7: release.py --update installs the latest release.py from the releases of the gitinit repository;
 #         --update=<version> installs that exact release.py version (also older ones), --update=list shows
@@ -545,21 +548,32 @@ def fetch_copy(tag, folder, timeout=None):
 def release_copies():
     """[[version, [release tags]], ...] for every published release that carries release.py, the highest
     version first. One small download per release."""
+    print(" Searching the repository for release.py versions...")
     r = gh("api", f"repos/{UPDATE_REPO}/releases", "--paginate", "--jq",
            f'.[] | select(.draft | not) | select(any(.assets[]; .name == "{UPDATE_ASSET}")) | .tag_name')
     tags = [t.strip() for t in r.stdout.splitlines() if t.strip()]
-    found = []
+    versions = {}
     with tempfile.TemporaryDirectory() as tmp:
-        for i, tag in enumerate(tags):
-            version, _ = fetch_copy(tag, Path(tmp) / str(i))
-            if version is None:
-                continue
-            for entry in found:
-                if entry[0] == version:
-                    entry[1].append(tag)
-                    break
-            else:
-                found.append([version, [tag]])
+        def check(i):
+            return i, fetch_copy(tags[i], Path(tmp) / str(i))[0]
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            futures = [pool.submit(check, i) for i in range(len(tags))]
+            for done, future in enumerate(as_completed(futures), 1):
+                i, version = future.result()
+                versions[i] = version
+                print(f"\r {done} of {len(tags)}", end="", flush=True)
+        print("\r" + " " * 20 + "\r", end="")
+    found = []
+    for i, tag in enumerate(tags):                      # newest release first
+        version = versions.get(i)
+        if version is None:
+            continue
+        for entry in found:
+            if entry[0] == version:
+                entry[1].append(tag)
+                break
+        else:
+            found.append([version, [tag]])
     return sorted(found, key=lambda e: version_key(e[0]), reverse=True)
 
 
@@ -727,7 +741,7 @@ def main(argv):
     if tag_is_public:
         git_visible("push", "--force", "origin", tag)       # keeps an already public tag on the amended commit
     else:
-        print(f" Tag {tag} is NOT pushed: GitHub creates it when the draft release is published.")
+        print(f" Tag {tag} not pushed (created on publish).")
 
     step(9, total, "Creating the draft release on GitHub...")
     sha = git("rev-parse", "HEAD").stdout.strip()
@@ -737,8 +751,7 @@ def main(argv):
     ok("===========================================")
     ok(f" SUCCESS! {mode} complete for {tag}")
     ok("===========================================")
-    print(" The release is a DRAFT. Publish it yourself on GitHub" + (f":\n   {url}" if url else ".")
-          + ("" if tag_is_public else f"\n The tag {tag} becomes visible only when you publish."))
+    print(" Released as DRAFT. Publish it on GitHub" + (f":\n   {url}" if url else "."))
     return 0
 
 
