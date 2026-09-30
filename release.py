@@ -3,6 +3,9 @@
 release.py -- release script for C projects (written by gitinit.py, do not edit per project).
 
 Usage:  python release.py "Commit message"
+        python release.py --update            install the latest release.py
+        python release.py --update=0.0.6      install that release.py version (an older one too)
+        python release.py --update=list       show the versions that can be installed
 
   A new version (the version in the source file has no git tag yet) needs a message.
   If the tag already exists, the last commit is amended and the tag is moved (UPDATE mode);
@@ -27,12 +30,16 @@ from pathlib import Path
 from types import SimpleNamespace
 
 # --- Version ------------------------------------------------------------
-__version__ = 'release 0.0.6'
+__version__ = 'release 0.0.7'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.7: release.py --update installs the latest release.py from the releases of the gitinit repository;
+#         --update=<version> installs that exact release.py version (also older ones), --update=list shows
+#         the available versions. The current copy is saved in backup\ first. Every normal run prints a
+#         notice when a newer release.py exists (silent when offline; never blocks a release).
 # v0.0.6: New [publish] section: the files that go into the GitHub 'Source code' zip/tar.gz of a release
 #         (LICENSE* always). release.py keeps a marked block in .gitattributes (export-ignore) up to date.
 #         Empty section = GitHub default (everything); the block is removed again.
@@ -240,8 +247,12 @@ def git_visible(*args):
         fail(f"git {' '.join(args)} failed.")
 
 
-def gh(*args, check=True):
-    r = subprocess.run([_exe("gh"), *args], cwd=ROOT, text=True, encoding="utf-8", capture_output=True)
+def gh(*args, check=True, timeout=None):
+    try:
+        r = subprocess.run([_exe("gh"), *args], cwd=ROOT, text=True, encoding="utf-8", capture_output=True,
+                           timeout=timeout)
+    except subprocess.TimeoutExpired:
+        r = subprocess.CompletedProcess(args, 1, "", "timed out")
     if check and r.returncode != 0:
         fail(f"gh {' '.join(args)} failed:\n{(r.stderr or r.stdout).strip()}")
     return r
@@ -500,6 +511,118 @@ def draft_release(cfg, tag, notes, assets, sha):
     return url
 
 
+# --- Updating release.py itself -----------------------------------------
+
+UPDATE_REPO = "rob-vandenberg/gitinit"     # the repository whose releases carry release.py
+UPDATE_ASSET = "release.py"
+SELF = Path(__file__).resolve()
+
+
+def version_of(source):
+    """'release 0.0.6' in the __version__ line of a release.py source text -> '0.0.6', or None."""
+    m = re.search(r"^__version__\s*=\s*(['\"])(.*?)\1", source, re.MULTILINE)
+    words = m.group(2).split() if m else []
+    return words[-1] if words and VERSION_RE.match(words[-1]) else None
+
+
+def version_key(version):
+    return tuple(int(x) for x in version.split("."))
+
+
+def fetch_copy(tag, folder, timeout=None):
+    """Downloads release.py of a release (tag None = the latest release) into folder.
+    Returns (version, path), or (None, None) when that fails."""
+    args = ["release", "download"] + ([tag] if tag else []) + [
+        "--repo", UPDATE_REPO, "--pattern", UPDATE_ASSET, "--dir", str(folder), "--clobber"]
+    r = gh(*args, check=False, timeout=timeout)
+    path = Path(folder) / UPDATE_ASSET
+    if r.returncode != 0 or not path.is_file():
+        return None, None
+    return version_of(path.read_text(encoding="utf-8", errors="replace")), path
+
+
+def release_copies():
+    """[[version, [release tags]], ...] for every published release that carries release.py, the highest
+    version first. One small download per release."""
+    r = gh("api", f"repos/{UPDATE_REPO}/releases", "--paginate", "--jq",
+           f'.[] | select(.draft | not) | select(any(.assets[]; .name == "{UPDATE_ASSET}")) | .tag_name')
+    tags = [t.strip() for t in r.stdout.splitlines() if t.strip()]
+    found = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for i, tag in enumerate(tags):
+            version, _ = fetch_copy(tag, Path(tmp) / str(i))
+            if version is None:
+                continue
+            for entry in found:
+                if entry[0] == version:
+                    entry[1].append(tag)
+                    break
+            else:
+                found.append([version, [tag]])
+    return sorted(found, key=lambda e: version_key(e[0]), reverse=True)
+
+
+def current_version():
+    return __version__.split()[-1]
+
+
+def newer_version_notice():
+    """Prints a notice when the latest release carries a newer release.py. Silent on any problem."""
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            latest, _ = fetch_copy(None, tmp, timeout=20)
+        if latest and version_key(latest) > version_key(current_version()):
+            warn(f" release.py {latest} is available (this is {current_version()}). "
+                 f"To install it run: release.bat --update")
+    except Exception:
+        pass
+
+
+def update_self(wanted):
+    """--update (latest), --update=<version> or --update=list."""
+    if wanted == "list":
+        copies = release_copies()
+        if not copies:
+            fail(f"No release.py was found in the releases of {UPDATE_REPO}.")
+        print(f" release.py versions in the releases of {UPDATE_REPO} (this copy is {current_version()}):")
+        for version, tags in copies:
+            print(f"   release.py {version}   (release {', '.join(tags)})")
+        return 0
+    if wanted is not None and not VERSION_RE.match(wanted):
+        fail(f"'{wanted}' is not a version like 0.0.6. Use --update, --update=<version> or --update=list.")
+    with tempfile.TemporaryDirectory() as tmp:
+        if wanted is None:
+            version, path = fetch_copy(None, Path(tmp))
+        else:
+            copies = release_copies()
+            tag = next((tags[0] for version, tags in copies if version == wanted), None)
+            if tag is None:
+                fail(f"release.py {wanted} is not in any release of {UPDATE_REPO}. Available: "
+                     + (", ".join(v for v, _ in copies) or "none"))
+            version, path = fetch_copy(tag, Path(tmp))
+        if version is None:
+            fail(f"Could not download release.py from {UPDATE_REPO}. Nothing was changed.")
+        data = path.read_bytes()
+        try:
+            compile(data.decode("utf-8"), UPDATE_ASSET, "exec")
+        except (SyntaxError, UnicodeDecodeError, ValueError) as err:
+            fail(f"The downloaded release.py {version} is not valid Python ({err}). Nothing was changed.")
+        if version == current_version():
+            print(f" release.py is already version {version}. Nothing was changed.")
+            return 0
+        old = current_version()
+        folder = ROOT / "backup"
+        folder.mkdir(exist_ok=True)
+        saved = folder / f"release_{old}.py"
+        _remove(saved)
+        saved.write_bytes(SELF.read_bytes())
+        os.chmod(saved, stat.S_IREAD)
+        SELF.write_bytes(data)
+    ok(f"[UPDATE] release.py {old} -> {version}")
+    print(f" The previous copy was saved as backup/{saved.name}")
+    return 0
+
+
 # --- Main ---------------------------------------------------------------
 
 def main(argv):
@@ -510,8 +633,13 @@ def main(argv):
     if len(argv) > 1 and argv[1] in ("-h", "--help", "/?"):
         print(__doc__)
         return 0
-    message = " ".join(argv[1:]).strip()
     print(f"{__version__}")
+    if len(argv) > 1:
+        m = re.fullmatch(r"--?update(?:=(.*))?", argv[1], re.IGNORECASE)
+        if m:
+            return update_self((m.group(1) or "").strip() or None)
+    message = " ".join(argv[1:]).strip()
+    newer_version_notice()
 
     step(1, total, "Reading release.ini and the version from the source file...")
     cfg = load_config()

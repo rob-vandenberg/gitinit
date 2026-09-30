@@ -2,11 +2,12 @@
 gitinit-py.py (Python projects and Home Assistant integrations) -- One-time setup of a new project:
 git, GitHub repository and release tooling.
 
-Copy this file and release.py into the project folder and run:  python gitinit-py.py
+Copy this file into the project folder and run:  python gitinit-py.py
 It creates the missing folders and files (existing files are NEVER overwritten), including
 release.bat, release.sh and release.ini, backs up the source, creates the GitHub
 repository if needed and pushes the initial commit and tag.
-Requires: Python 3, git, the GitHub CLI (gh) logged in (gh auth login), and release.py in the folder.
+Requires: Python 3, git and the GitHub CLI (gh) logged in (gh auth login). release.py is downloaded from
+the latest release of rob-vandenberg/gitinit when the folder does not have it yet (an existing copy is never replaced).
 """
 
 import importlib.util
@@ -20,12 +21,14 @@ from datetime import date
 from pathlib import Path
 
 # --- Version ------------------------------------------------------------
-__version__ = 'gitinit-py 0.0.2'
+__version__ = 'gitinit-py 0.0.3'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.3: A missing release.py is downloaded from the latest release of rob-vandenberg/gitinit (never overwritten);
+#         an existing one must be at least release 0.0.6.
 # v0.0.2: release.ini gets an empty [publish] section (files for the GitHub source archives), with examples.
 # v0.0.1: Initial Python version, derived from gitinit-c 0.0.3. Two kinds of project: a normal Python
 #         project (<identifier>.py) and a Home Assistant integration (custom_components/<domain>/ with
@@ -37,6 +40,8 @@ GITHUB_USER = "rob-vandenberg"
 AUTHOR = "Rob Vandenberg"
 LICENSE_KEY = "agpl-3.0"          # GitHub license key; the text is fetched from GitHub when LICENSE is missing
 INITIAL_VERSION = "0.0.0"
+RELEASE_REPO = "rob-vandenberg/gitinit"     # its releases carry release.py
+MIN_RELEASE = "0.0.6"                       # oldest release.py this gitinit works with
 INITIAL_MESSAGE = "Initial scaffold"
 FOLDERS = ["backup", "dist", "art"]
 HA_PREFIX = "\U0001F535 HOME ASSISTANT - "       # in front of the GitHub repository description only
@@ -457,6 +462,29 @@ def remove_unused_git(root):
     return False
 
 
+def ensure_release_py(root):
+    """Downloads release.py from the latest release of RELEASE_REPO when the folder has none."""
+    if (root / "release.py").is_file():
+        return
+    info(f"  release.py not found here: downloading it from the latest release of {RELEASE_REPO} ...")
+    result = run(["gh", "release", "download", "--repo", RELEASE_REPO, "--pattern", "release.py",
+                  "--dir", str(root)], capture=True, check=False)
+    if result.returncode != 0 or not (root / "release.py").is_file():
+        detail = (result.stderr or result.stdout or "").strip()
+        fail("release.py was not found in this folder and could not be downloaded.\n"
+             + (detail + "\n" if detail else "")
+             + f"Download it yourself: gh release download --repo {RELEASE_REPO} --pattern release.py")
+
+
+def check_release_version(module):
+    """Stops when release.py is older than MIN_RELEASE (copies older than 0.0.5 have no version())."""
+    func = getattr(module, "version", None)
+    found = func().split()[-1] if callable(func) else "0.0.0"
+    if tuple(int(x) for x in found.split(".")) < tuple(int(x) for x in MIN_RELEASE.split(".")):
+        fail(f"release.py {found} in this folder is older than {MIN_RELEASE}, which this gitinit needs.\n"
+             f"Replace it: gh release download --repo {RELEASE_REPO} --pattern release.py --clobber")
+
+
 def via_release(module, func, *args):
     """Calls a function of release.py and turns its errors into InitError."""
     try:
@@ -479,8 +507,9 @@ def main():
             fail(f"'{tool}' was not found on PATH. Install it first.")
     if run(["gh", "auth", "status"], capture=True, check=False).returncode != 0:
         fail("The GitHub CLI is not logged in. Run: gh auth login")
-    if not (root / "release.py").is_file():
-        fail("release.py was not found in this folder. Copy release.py next to gitinit-py.py first: gitinit uses it.")
+    ensure_release_py(root)
+    release = load_release_module(root)
+    check_release_version(release)
     git_exists = (root / ".git").exists()
     if git_exists:
         info("\n !! WARNING: this folder already contains a git repository (.git).")
@@ -651,7 +680,6 @@ def main():
 
     # --- Backup ---------------------------------------------------------
     step(4, total, "Creating backup...")
-    release = load_release_module(root)
     cfg = via_release(release, "load_config", root)
     backup = via_release(release, "make_backup", cfg, version)
     info(f"  {backup.relative_to(root).as_posix()} (read-only)")
