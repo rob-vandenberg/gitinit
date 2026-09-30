@@ -30,12 +30,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 # --- Version ------------------------------------------------------------
-__version__ = 'release 0.0.7'
+__version__ = 'release 0.0.8'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.8: The version line at the start of a run is printed in bright white.
 # v0.0.7: release.py --update installs the latest release.py from the releases of the gitinit repository;
 #         --update=<version> installs that exact release.py version (also older ones), --update=list shows
 #         the available versions. The current copy is saved in backup\ first. Every normal run prints a
@@ -633,7 +634,7 @@ def main(argv):
     if len(argv) > 1 and argv[1] in ("-h", "--help", "/?"):
         print(__doc__)
         return 0
-    print(f"{__version__}")
+    print(f"{WHITE}{__version__}{RESET}")
     if len(argv) > 1:
         m = re.fullmatch(r"--?update(?:=(.*))?", argv[1], re.IGNORECASE)
         if m:

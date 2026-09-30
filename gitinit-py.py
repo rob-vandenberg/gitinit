@@ -20,13 +20,19 @@ import sys
 from datetime import date
 from pathlib import Path
 
+if os.name == "nt":
+    os.system("")                  # enables ANSI colors in the Windows console
+WHITE, MAGENTA, RESET = "\033[97m", "\033[95m", "\033[0m"
+
 # --- Version ------------------------------------------------------------
-__version__ = 'gitinit-py 0.0.5'
+__version__ = 'gitinit-py 0.0.6'
 
 def version():
     return __version__
 
 # --- Version history ----------------------------------------------------
+# v0.0.6: The version line at the start is printed in bright white, and the version of the imported release.py
+#         in magenta (the convention: a script announces itself in white, the modules it imports in magenta).
 # v0.0.5: The initial tag is no longer pushed: it stays local, and GitHub creates the tag when the release is published.
 # v0.0.4: The new-file check no longer asks about the files this run just created (they are approved).
 # v0.0.3: A missing release.py is downloaded from the latest release of rob-vandenberg/gitinit (never overwritten);
@@ -500,7 +506,8 @@ def via_release(module, func, *args):
 def main():
     root = Path.cwd()
     total = 7
-    info(f"{__version__} -- new Python project in: {root}")
+    info(f"{WHITE}{__version__}{RESET}")
+    info(f"New Python project in: {root}")
 
     # --- Requirements ---------------------------------------------------
     step(1, total, "Checking requirements...")
@@ -512,6 +519,7 @@ def main():
     ensure_release_py(root)
     release = load_release_module(root)
     check_release_version(release)
+    info(f"{MAGENTA}{release.version()}{RESET}")
     git_exists = (root / ".git").exists()
     if git_exists:
         info("\n !! WARNING: this folder already contains a git repository (.git).")
